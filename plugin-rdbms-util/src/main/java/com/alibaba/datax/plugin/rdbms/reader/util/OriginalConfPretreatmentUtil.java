@@ -200,11 +200,23 @@ public final class OriginalConfPretreatmentUtil {
             }
         } else {
             // querySql模式，不希望配制 column，那样是混淆不清晰的
+            /**
             if (null != userConfiguredColumns
                     && userConfiguredColumns.size() > 0) {
                 LOG.warn("您的配置有误. 由于您读取数据库表采用了querySql的方式, 所以您不需要再配置 column. 如果您不想看到这条提醒，请移除您源头表中配置中的 column.");
                 originalConfig.remove(Key.COLUMN);
             }
+             **/
+            List<String> quotedColumns = new ArrayList<String>();
+            for (String column : userConfiguredColumns) {
+                if ("*".equals(column)) {
+                    throw DataXException.asDataXException(
+                            DBUtilErrorCode.ILLEGAL_VALUE,
+                            "您的配置文件中的列配置信息有误. 因为根据您的配置，数据库表的列中存在多个*. 请检查您的配置并作出修改. ");
+                }
+                quotedColumns.add(column);
+            }
+            originalConfig.set(Key.COLUMN, StringUtils.join(quotedColumns, ","));
 
             // querySql模式，不希望配制 where，那样是混淆不清晰的
             String where = originalConfig.getString(Key.WHERE, null);
