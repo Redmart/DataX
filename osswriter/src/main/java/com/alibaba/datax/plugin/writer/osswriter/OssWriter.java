@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.nio.file.Files;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -268,7 +269,7 @@ public class OssWriter extends Writer {
         @Override
         public void startWrite(RecordReceiver lineReceiver) {
             // 设置每块字符串长度
-            final long partSize = 1024 * 1024 * 10L;
+            final long partSize = 1024 * 1024 * 100L;
             long numberCacul = (this.maxFileSize * 1024 * 1024L) / partSize;
             final long maxPartNumber = numberCacul >= 1 ? numberCacul : 1;
             int objectRollingNumber = 0;
@@ -282,7 +283,7 @@ public class OssWriter extends Writer {
 
             LOG.info(String.format(
                     "begin do write, each object maxFileSize: [%s]MB...",
-                    maxPartNumber * 10));
+                    maxPartNumber * 100));
             String currentObject = this.object;
             InitiateMultipartUploadRequest currentInitiateMultipartUploadRequest = null;
             InitiateMultipartUploadResult currentInitiateMultipartUploadResult = null;
@@ -303,6 +304,16 @@ public class OssWriter extends Writer {
                     gotData = true;
                     // init:begin new multipart upload
                     if (needInitMultipartTransform) {
+                        if (objectRollingNumber > 0) {
+                            // not first rolling file, need append rolling num as file name
+                            // myfile__9b886b70fbef11e59a3600163e00068c_1
+                            if (StringUtils.isBlank(this.suffix)) {
+                                currentObject = String.format("%s_%s", this.object, objectRollingNumber);
+                            } else {
+                                // myfile__9b886b70fbef11e59a3600163e00068c_1.csv
+                                currentObject = String.format("%s_%s%s", this.object, objectRollingNumber, this.suffix);
+                            }
+                        }
                         objectRollingNumber++;
                         currentInitiateMultipartUploadRequest = new InitiateMultipartUploadRequest(
                                 this.bucket, currentObject);
@@ -416,18 +427,22 @@ public class OssWriter extends Writer {
                 @Override
                 public Boolean call() throws Exception {
                     byte[] byteArray = sw.toString().getBytes(encoding);
-                    int length = byteArray.length;
+                    long length = byteArray.length;
                     // to gzip compress the content
                     InputStream inputStream;
                     // TODO more compress support
                     if ("gzip".equalsIgnoreCase(compress)) {
-                        ByteArrayOutputStream obj = new ByteArrayOutputStream();
-                        GzipCompressorOutputStream gzipout = new GzipCompressorOutputStream(obj);
+                        // Use a tmp file with stream process for compress
+                        // in case the content is too big and cause OutOfMemory.
+                        File file = File.createTempFile("oss_compress", ".gz");
+                        file.deleteOnExit();
+                        FileOutputStream tmpOut = new FileOutputStream(file.getAbsolutePath());
+                        GzipCompressorOutputStream gzipout = new GzipCompressorOutputStream(tmpOut);
                         gzipout.write(byteArray);
-                        gzipout.close();
-                        byte[] bytes = obj.toByteArray();
-                        inputStream = new ByteArrayInputStream(bytes);
-                        length = bytes.length;
+                        IOUtils.closeQuietly(gzipout);
+                        IOUtils.closeQuietly(tmpOut);
+                        inputStream = new FileInputStream(file.getAbsolutePath());
+                        length = Files.size(file.toPath());
                     } else {
                         inputStream = new ByteArrayInputStream(byteArray);
                     }
